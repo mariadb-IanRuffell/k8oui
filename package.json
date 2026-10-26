@@ -1,0 +1,12 @@
+{
+  "name": "k8oui",
+  "version": "0.1.0",
+  "description": "Web UI to visualise and manage Kubernetes Operators",
+  "private": true,
+  "bin": { "k8oui": "server.js" },
+  "scripts": {
+    "start": "node server.js",
+    "demo": "node server.js --demo"
+  },
+  "engines": { "node": ">=18" }
+}
