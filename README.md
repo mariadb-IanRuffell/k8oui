@@ -15,7 +15,7 @@ Then open http://127.0.0.1:7788.
 - **Operators list**: health, version, replicas, CRDs, custom-resource counts, restarts.
 - **Topology**: operator → CRD → resource (one coloured dot per instance).
 - **Detail drawer**: overview/conditions, resources per CRD, pods, logs, events, deployment manifest.
-- **Actions**: restart, scale (0 = pause), view/edit/validate (server dry run)/apply a custom resource, delete a custom resource. Context switcher in the header.
+- **Actions**: restart, scale (0 = pause), view/edit/validate (server dry run)/apply a custom resource, delete a custom resource, or create a new one from a generated template (**+ New** on each CRD). Context switcher in the header.
 - **Add operator**: enter a GitHub URL (`https://github.com/owner/repo[/tree/branch/path]`) or a local folder. k8oui clones (shallow) or reads it, detects install methods (Helm chart, `install.yaml`, kustomize, manifest dir), shows the exact command, and offers a dry run before installing. Needs `git` for GitHub sources and `helm` for charts.
 
 ## How operators are found

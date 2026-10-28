@@ -200,6 +200,7 @@ function renderDrawer() {
     h('div', { class: 'actions' },
       h('button', { class: 'btn', onclick: () => doRestart(o) }, '⟳ Restart'),
       h('button', { class: 'btn', onclick: () => doScale(o) }, 'Scale…'),
+      o.crds.length > 0 && h('button', { class: 'btn', onclick: () => { state.tab = 'resources'; renderDrawer(); } }, 'Create resource…'),
       h('button', { class: 'btn', onclick: refreshDetail }, 'Reload'),
       o.helm && h('button', { class: 'btn danger', onclick: () => doUninstall(o) }, 'Uninstall')),
     h('div', { class: 'dtabs', role: 'tablist' }, TABS.map(([k, label]) =>
@@ -230,7 +231,8 @@ function tabBody(body, o, d) {
       if (!o.crds.length) body.append(h('p', { class: 'muted' }, 'No custom resource definitions are attributed to this operator.'));
       for (const c of o.crds) {
         body.append(h('details', { open: c.instances.length > 0 && o.crds.length <= 4 },
-          h('summary', {}, h('b', {}, c.kind), h('span', { class: 'muted' }, `${c.group}/${c.storageVersion || c.versions[0]} · ${c.scope}`), h('span', { class: 'spacer' }), h('span', { class: 'num' }, c.instances.length)),
+          h('summary', {}, h('b', {}, c.kind), h('span', { class: 'muted' }, `${c.group}/${c.storageVersion || c.versions[0]} · ${c.scope}`), h('span', { class: 'spacer' }), h('span', { class: 'num' }, c.instances.length),
+            h('button', { class: 'btn small', title: `Create a new ${c.kind}`, onclick: e => { e.preventDefault(); e.stopPropagation(); newCR(o, c); } }, '+ New')),
           c.instances.length ? h('table', {}, h('tbody', {}, c.instances.map(i => h('tr', {},
             h('td', {}, badge(i.status)), h('td', {}, h('div', { class: 'name' }, i.name), h('div', { class: 'muted' }, i.namespace || 'cluster-wide')), h('td', { class: 'num' }, age(i.created)),
             h('td', {}, h('div', { class: 'row' },
@@ -312,6 +314,25 @@ function doScale(o) {
 async function doDelete(o, c, i) {
   if (await confirmDlg(`Delete ${c.kind} “${i.name}”?`, `This deletes ${c.plural}.${c.group}/${i.name}${i.namespace ? ' in ' + i.namespace : ''} from the cluster. The operator will tear down whatever it manages for it.`, 'Delete', true))
     act(() => api('/api/delete', { id: o.id, crd: c.name, name: i.name, ns: i.namespace }));
+}
+async function newCR(o, c) {
+  let text;
+  try { text = (await api('/api/template?' + qs({ id: o.id, crd: c.name, ns: o.namespace }))).text; }
+  catch (e) { return toast(e.message, true); }
+  const ta = h('textarea', { class: 'code', spellcheck: 'false', 'aria-label': 'Manifest YAML' }, text);
+  const msg = h('div', { class: 'msg', hidden: true });
+  const show = (t, err) => { msg.hidden = false; msg.className = 'msg ' + (err ? 'err' : 'ok'); msg.textContent = t; };
+  const run = async dry => {
+    try { show((await api('/api/apply', { id: o.id, yaml: ta.value, dryRun: dry, create: true })).message); if (!dry) { await load(); await refreshDetail(); } }
+    catch (e) { show(e.message, true); }
+  };
+  const d = dialog([h('h2', {}, `New ${c.kind}`),
+    h('div', { class: 'muted' }, `Starter manifest from the ${c.name} schema: required fields are filled in (replace CHANGE_ME), optional fields are listed in comments.`),
+    ta, msg,
+    h('div', { class: 'foot' }, h('button', { class: 'btn', onclick: () => d.close() }, 'Close'),
+      h('button', { class: 'btn', onclick: () => run(true) }, 'Validate (dry run)'),
+      h('button', { class: 'btn primary', onclick: () => run(false) }, 'Create'))]);
+  ta.focus();
 }
 async function openCR(id, c, i) {
   let text;
