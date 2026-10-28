@@ -200,7 +200,8 @@ function renderDrawer() {
     h('div', { class: 'actions' },
       h('button', { class: 'btn', onclick: () => doRestart(o) }, '⟳ Restart'),
       h('button', { class: 'btn', onclick: () => doScale(o) }, 'Scale…'),
-      h('button', { class: 'btn', onclick: refreshDetail }, 'Reload')),
+      h('button', { class: 'btn', onclick: refreshDetail }, 'Reload'),
+      o.helm && h('button', { class: 'btn danger', onclick: () => doUninstall(o) }, 'Uninstall')),
     h('div', { class: 'dtabs', role: 'tablist' }, TABS.map(([k, label]) =>
       h('button', { role: 'tab', 'aria-selected': String(state.tab === k), onclick: () => { state.tab = k; renderDrawer(); } }, label))));
   const body = h('div', { class: 'dbody' });
@@ -364,23 +365,78 @@ function addOperator() {
   const inspectBtn = h('button', { class: 'btn primary', onclick: inspect }, 'Inspect');
   src.addEventListener('keydown', e => e.key === 'Enter' && inspect());
   foot.append(close, inspectBtn);
-  const d = dialog([h('h2', {}, 'Add operator'),
+  const cat = h('div');
+  api('/api/catalog').then(r => cat.replaceChildren(h('h3', {}, 'Catalog'), ...r.items.map(p =>
+    h('div', { class: 'ev', style: 'display:flex;gap:12px;align-items:center' },
+      h('div', { style: 'flex:1' }, h('b', {}, p.name), h('div', { class: 'muted' }, p.description)),
+      h('button', { class: 'btn primary', onclick: () => presetForm(p) }, 'Install…')),
+    ), h('h3', {}, 'From GitHub or a local folder'))).catch(() => {});
+  const d = dialog([h('h2', {}, 'Add operator'), cat,
     h('div', { class: 'muted' }, 'Point at a GitHub repo (https://github.com/owner/repo[/tree/branch/path]) or a folder on this machine. k8oui detects how to install it; nothing runs until you choose Dry run or Install.'),
     h('div', { class: 'row' }, src), h('div', { class: 'row' }, rel, ns, h('span', { class: 'muted' }, 'Helm only; blank = defaults')),
     detected, msg, foot]);
   src.focus();
 }
-function confirmInstall(plan, i) {
-  const c = plan.candidates[i];
+function confirmInstall(plan, i) { return swapConfirm('Install this operator?', plan.candidates[i].command); }
+function swapConfirm(title, text) {
   return new Promise(resolve => {
     const d = $('dlg');
     const prev = [...d.firstChild.childNodes];
     const back = v => { d.replaceChildren(h('div', { class: 'dlg' }, prev)); resolve(v); };
-    d.replaceChildren(h('div', { class: 'dlg' }, h('h2', {}, 'Install this operator?'),
+    d.replaceChildren(h('div', { class: 'dlg' }, h('h2', {}, title),
       h('p', {}, 'This runs the following against your current cluster and applies code from the source you entered. Review it first.'),
-      h('pre', { class: 'log' }, c.command), h('div', { class: 'foot' },
+      h('pre', { class: 'log' }, text), h('div', { class: 'foot' },
         h('button', { class: 'btn', onclick: () => back(false) }, 'Back'), h('button', { class: 'btn primary', onclick: () => back(true) }, 'Install'))));
   });
+}
+
+const INPUT_STYLE = 'background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 10px';
+function presetForm(p) {
+  const field = (label, input) => h('label', { style: 'display:grid;gap:3px' }, h('span', { class: 'muted' }, label), input);
+  const text = (v, extra) => h('input', { type: 'text', value: v || '', autocomplete: 'off', spellcheck: 'false', style: INPUT_STYLE, ...extra });
+  const ns = text(p.defaultNamespace), version = text('', { placeholder: 'latest, or e.g. 25.10.*' });
+  const secretName = text(p.registry.secretName);
+  const user = text('', { 'aria-label': 'Username' });
+  const pass = h('input', { type: 'password', autocomplete: 'new-password', 'aria-label': 'Password or token', style: INPUT_STYLE });
+  const mode = ['create', 'existing'].map(v => h('input', { type: 'radio', name: 'secretmode', value: v, checked: v === 'create', onchange: sync }));
+  const opts = p.options.map(o => h('input', { type: 'checkbox', 'data-key': o.key }));
+  const creds = h('div', { style: 'display:grid;gap:8px;grid-template-columns:1fr 1fr' }, field('Username', user), field('Password / token', pass));
+  const msg = h('div', { class: 'msg', hidden: true });
+  const show = (t, err) => { msg.hidden = false; msg.className = 'msg ' + (err ? 'err' : 'ok'); msg.textContent = t; msg.scrollIntoView({ block: 'nearest' }); };
+  function sync() { creds.style.display = mode[0].checked ? 'grid' : 'none'; }
+  const body = dry => ({ preset: p.id, namespace: ns.value, secretName: secretName.value, createSecret: mode[0].checked,
+    username: user.value, password: pass.value, version: version.value, dryRun: dry, options: Object.fromEntries(opts.map(o => [o.dataset.key, o.checked])) });
+  const busy = b => { for (const x of d.querySelectorAll('button')) x.disabled = b; };
+  const go = async dry => {
+    msg.hidden = true;
+    try {
+      if (!dry) {
+        const pv = await api('/api/catalog/preview', body(false));
+        if (!(await swapConfirm(`Install ${p.name}?`, pv.steps.join('\n\n')))) return;
+      }
+      busy(true); show(dry ? 'Running dry run…' : 'Installing… this can take a minute.');
+      show((await api('/api/catalog/install', body(dry))).message);
+      if (!dry) { pass.value = ''; toast('Installed. Waiting for the operator to appear…'); load(); setTimeout(load, 4000); setTimeout(load, 12000); }
+    } catch (e) { show(e.message, true); }
+    busy(false);
+  };
+  const d = dialog([h('h2', {}, `Install ${p.name}`),
+    h('div', { class: 'muted' }, 'Installs the CRDs chart and the operator with Helm into one namespace. ', h('a', { href: p.docs, target: '_blank', rel: 'noopener noreferrer' }, 'Documentation')),
+    h('div', { style: 'display:grid;gap:8px;grid-template-columns:1fr 1fr' }, field('Namespace', ns), field('Chart version (optional)', version)),
+    h('h3', {}, `Image pull secret for ${p.registry.server}`),
+    h('label', {}, mode[0], ' Create it from my MariaDB customer credentials'),
+    h('label', {}, mode[1], ' Use a secret that already exists in that namespace'),
+    creds, field('Secret name', secretName),
+    h('div', { class: 'muted' }, 'Credentials are sent only to your local k8oui server, written to the cluster as a Secret, and never stored or logged by k8oui.'),
+    h('h3', {}, 'Options'), ...p.options.map((o, i) => h('label', {}, opts[i], ' ', o.label)),
+    msg,
+    h('div', { class: 'foot' }, h('button', { class: 'btn', onclick: addOperator }, 'Back'), h('button', { class: 'btn', onclick: () => d.close() }, 'Close'),
+      h('button', { class: 'btn', onclick: () => go(true) }, 'Dry run'), h('button', { class: 'btn primary', onclick: () => go(false) }, 'Install'))]);
+  user.focus();
+}
+async function doUninstall(o) {
+  if (await confirmDlg(`Uninstall ${o.name}?`, `Runs helm uninstall for release ${o.helm}. The operator stops reconciling; its CRDs and existing custom resources stay in the cluster.`, 'Uninstall', true))
+    act(async () => { const r = await api('/api/uninstall', { id: o.id }); closeDrawer(); return r; }, 'Uninstalled');
 }
 
 // ---- wiring ----------------------------------------------------------------

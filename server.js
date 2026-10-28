@@ -6,6 +6,7 @@ const path = require('node:path');
 const kube = require('./lib/kube');
 const demo = require('./lib/demo');
 const source = require('./lib/source');
+const catalog = require('./lib/catalog');
 
 const argv = process.argv.slice(2);
 const flag = n => argv.includes(`--${n}`);
@@ -57,6 +58,10 @@ const routes = {
   'POST /api/apply': async ({ b }) => ({ message: await backend.apply(b.id, b.yaml, !!b.dryRun) }),
   'POST /api/install/plan': async ({ b }) => source.resolve(b.source),
   'POST /api/install/apply': async ({ b }) => ({ message: await backend.install(b.planId, b.index, { release: b.release, namespace: b.namespace }, !!b.dryRun) }),
+  'GET /api/catalog': async () => ({ items: catalog.list() }),
+  'POST /api/catalog/preview': async ({ b }) => ({ steps: catalog.plan(b, !!b.dryRun).steps.map(x => x.shown) }),
+  'POST /api/catalog/install': async ({ b }) => ({ message: await backend.installPreset(b, !!b.dryRun) }),
+  'POST /api/uninstall': async ({ b }) => ({ message: await backend.uninstall(b.id) }),
   'POST /api/context': async ({ b }) => { await backend.setContext(b.name); return { ok: true }; },
   'POST /api/mode': async ({ b }) => {
     if (b.mode === 'demo') { backend = demo; mode = 'demo'; reason = 'Demo mode requested'; demo.reset(); }
