@@ -52,7 +52,7 @@ const routes = {
     operators: await backend.operators(), fetchedAt: new Date().toISOString(),
   }),
   'GET /api/operator': async ({ q }) => backend.detail(q.id),
-  'GET /api/logs': async ({ q }) => ({ text: await backend.logs(q.id, q.pod, q.tail) }),
+  'GET /api/logs': async ({ q }) => ({ text: await backend.logs(q.id, q.pod, q.tail, q.ns) }),
   'GET /api/yaml': async ({ q }) => ({ text: await backend.yaml(q) }),
   'POST /api/restart': async ({ b }) => ({ message: await backend.restart(b.id) }),
   'POST /api/scale': async ({ b }) => ({ message: await backend.scale(b.id, b.replicas) }),

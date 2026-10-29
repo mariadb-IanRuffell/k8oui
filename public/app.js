@@ -241,13 +241,19 @@ function tabBody(body, o, d) {
               h('button', { class: 'btn small danger', onclick: () => doDelete(o, c, i) }, 'Delete'))))))) : h('div', { class: 'dbody muted' }, 'No instances')));
       }
       break;
-    case 'pods':
+    case 'pods': {
       if (!d) return loading();
-      body.append(d.pods.length ? h('table', {}, h('thead', {}, h('tr', {}, ...['Pod', 'State', 'Restarts', 'Node', 'Age', ''].map(t => h('th', {}, t)))),
-        h('tbody', {}, d.pods.map(p => h('tr', {}, h('td', {}, h('code', {}, p.name)), h('td', {}, badge(p.reason ? 'Degraded' : p.ready ? 'Healthy' : 'Progressing'), ' ', p.reason || p.phase),
+      if (!d.pods.length) return body.append(h('p', { class: 'muted' }, 'No pods (is the operator scaled to 0?)'));
+      const multiNs = new Set(d.pods.map(p => p.namespace)).size > 1;
+      body.append(h('table', {}, h('thead', {}, h('tr', {}, ...['Pod', 'Ready', 'State', 'Restarts', 'Node', 'Age', ''].map(t => h('th', {}, t)))),
+        h('tbody', {}, d.pods.map(p => h('tr', {},
+          h('td', {}, h('code', {}, p.name), h('div', { class: 'muted' }, [multiNs && p.namespace, p.role === 'managed' ? `managed by ${p.owner}` : 'operator'].filter(Boolean).join(' · '))),
+          h('td', { class: 'num' }, p.ready ? '1/1' : '0/1'),
+          h('td', {}, badge(p.reason ? 'Degraded' : p.ready ? 'Healthy' : 'Progressing'), ' ', p.reason || p.phase),
           h('td', { class: 'num' }, p.restarts), h('td', {}, p.node || '—'), h('td', { class: 'num' }, age(p.created)),
-          h('td', {}, h('button', { class: 'btn small', onclick: () => { state.logPod = p.name; state.tab = 'logs'; renderDrawer(); } }, 'Logs')))))) : h('p', { class: 'muted' }, 'No pods (is the operator scaled to 0?)'));
+          h('td', {}, h('button', { class: 'btn small', onclick: () => { state.logPod = p.name; state.tab = 'logs'; renderDrawer(); } }, 'Logs')))))));
       break;
+    }
     case 'logs': {
       if (!d) return loading();
       if (!d.pods.length) return body.append(h('p', { class: 'muted' }, 'No pods to read logs from.'));
@@ -255,7 +261,7 @@ function tabBody(body, o, d) {
       const pre = h('pre', { class: 'log' }, 'Loading…');
       const fetchLogs = async () => {
         pre.textContent = 'Loading…';
-        try { pre.textContent = (await api('/api/logs?' + qs({ id: o.id, pod: state.logPod, tail: state.logTail }))).text || '(no output)'; pre.scrollTop = pre.scrollHeight; }
+        try { pre.textContent = (await api('/api/logs?' + qs({ id: o.id, pod: state.logPod, ns: (d.pods.find(p => p.name === state.logPod) || {}).namespace, tail: state.logTail }))).text || '(no output)'; pre.scrollTop = pre.scrollHeight; }
         catch (e) { pre.textContent = e.message; }
       };
       body.append(h('div', { class: 'row' },
