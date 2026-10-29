@@ -129,3 +129,10 @@ textarea.code { width: 100%; min-height: 340px; background: var(--code); resize:
 .toast { background: var(--text); color: var(--bg); padding: 9px 16px; border-radius: 10px; box-shadow: var(--shadow); max-width: 80vw; }
 .toast.err { background: var(--bad); color: #fff; }
 @media (max-width: 700px) { #search { width: 100%; } th:nth-child(n+5), td:nth-child(n+5) { display: none; } }
+
+.btn.claude { border-color: var(--accent, #7c5cff); color: var(--accent, #7c5cff); }
+.answer { margin-top: 12px; max-height: 40vh; overflow: auto; }
+.answer p, .answer ul { margin: 8px 0; }
+.answer code { background: var(--code); padding: 1px 5px; border-radius: 4px; }
+.codeblock { position: relative; }
+.codeblock .btn { position: absolute; top: 16px; right: 8px; }

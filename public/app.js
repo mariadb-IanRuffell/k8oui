@@ -202,6 +202,7 @@ function renderDrawer() {
       h('button', { class: 'btn', onclick: () => doScale(o) }, 'Scale…'),
       o.crds.length > 0 && h('button', { class: 'btn', onclick: () => { state.tab = 'resources'; renderDrawer(); } }, 'Create resource…'),
       h('button', { class: 'btn', onclick: refreshDetail }, 'Reload'),
+      h('button', { class: 'btn claude', onclick: () => askClaude(o) }, '✦ Ask Claude'),
       o.helm && h('button', { class: 'btn danger', onclick: () => doUninstall(o) }, 'Uninstall')),
     h('div', { class: 'dtabs', role: 'tablist' }, TABS.map(([k, label]) =>
       h('button', { role: 'tab', 'aria-selected': String(state.tab === k), onclick: () => { state.tab = k; renderDrawer(); } }, label))));
@@ -344,8 +345,52 @@ async function openCR(id, c, i) {
   const run = async dryRun => { try { show((await api('/api/apply', { id, yaml: ta.value, dryRun })).message); if (!dryRun) await load(); } catch (e) { show(e.message, true); } };
   const d = dialog([h('h2', {}, `${c.kind} / ${i.name}`), h('div', { class: 'muted' }, 'Edit and apply the manifest. Status and managed fields are ignored by the API server.'), ta, msg,
     h('div', { class: 'foot' }, h('button', { class: 'btn', onclick: () => d.close() }, 'Close'),
+      h('button', { class: 'btn claude', onclick: () => askClaude(state.data.operators.find(x => x.id === id) || { id, name: id }, { crd: c.name, name: i.name, ns: i.namespace }, `${c.kind}/${i.name}`) }, '✦ Ask Claude'),
       h('button', { class: 'btn', onclick: () => run(true) }, 'Validate (dry run)'),
       h('button', { class: 'btn primary', onclick: () => run(false) }, 'Apply'))]);
+}
+
+// ---- ask Claude ------------------------------------------------------------
+// Minimal safe Markdown: fenced code blocks (with Copy), `inline code`, **bold**, paragraphs.
+function inline(t) {
+  return t.split(/(`[^`]+`|\*\*[^*]+\*\*)/).filter(Boolean).map(x =>
+    x.startsWith('`') ? h('code', {}, x.slice(1, -1)) : x.startsWith('**') ? h('b', {}, x.slice(2, -2)) : x);
+}
+function markdown(src) {
+  const out = [];
+  for (const [i, chunk] of src.split(/^```.*\n?/m).entries()) {
+    if (i % 2) {
+      const code = chunk.replace(/\n$/, '');
+      const copy = h('button', { class: 'btn small', onclick: async () => { try { await navigator.clipboard.writeText(code); copy.textContent = 'Copied'; } catch { copy.textContent = 'Copy failed'; } } }, 'Copy');
+      out.push(h('div', { class: 'codeblock' }, copy, h('pre', { class: 'log' }, code)));
+    } else for (const para of chunk.split(/\n{2,}/).filter(x => x.trim())) {
+      const lines = para.split('\n');
+      if (/^\s*(\d+\.|[-*])\s/.test(lines[0])) out.push(h('ul', {}, lines.map(l => h('li', {}, inline(l.replace(/^\s*(\d+\.|[-*])\s/, ''))))));
+      else out.push(h('p', {}, inline(para.replace(/\n/g, ' '))));
+    }
+  }
+  return out;
+}
+async function askClaude(o, target, label) {
+  const q = h('input', { type: 'text', placeholder: 'Optional: what are you seeing? (default: diagnose and suggest a fix)', 'aria-label': 'Question', style: 'width:100%;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 10px' });
+  const preview = h('pre', { class: 'log', style: 'max-height:30vh' }, 'Collecting diagnostics…');
+  const answer = h('div', { class: 'answer' });
+  const askBtn = h('button', { class: 'btn primary', disabled: true }, 'Ask Claude');
+  const d = dialog([h('h2', {}, `Ask Claude about ${label || o.name}`),
+    h('div', { class: 'muted' }, 'Read-only diagnostics (status, pods, events, recent logs' + (target ? ', this resource' : '') + ') are sent to Claude through your local claude CLI after you click Ask. Obvious credentials are redacted, but review it first. Claude cannot run anything; apply fixes yourself.'),
+    h('details', {}, h('summary', {}, 'What will be sent'), preview), q, answer,
+    h('div', { class: 'foot' }, h('button', { class: 'btn', onclick: () => d.close() }, 'Close'), askBtn)]);
+  try { preview.textContent = (await api('/api/assist/context', { id: o.id, target })).text; askBtn.disabled = false; }
+  catch (e) { preview.textContent = e.message; return; }
+  const go = async () => {
+    askBtn.disabled = true; q.disabled = true; askBtn.textContent = 'Thinking…';
+    answer.replaceChildren(h('p', { class: 'muted' }, 'Claude is analysing the diagnostics. This can take up to a minute.'));
+    try { answer.replaceChildren(...markdown((await api('/api/assist/ask', { id: o.id, target, question: q.value })).text)); }
+    catch (e) { answer.replaceChildren(h('div', { class: 'msg err' }, e.message)); }
+    askBtn.disabled = false; q.disabled = false; askBtn.textContent = 'Ask again';
+  };
+  askBtn.onclick = go;
+  q.onkeydown = e => { if (e.key === 'Enter' && !askBtn.disabled) go(); };
 }
 
 // ---- add operator ----------------------------------------------------------
