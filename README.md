@@ -9,7 +9,7 @@ node server.js --context kind-foo --port 7788
 ```
 Then open http://127.0.0.1:7788.
 
-![k8oui showing operators with health, CRDs and resource counts (demo data)](docs/screenshot.png)
+![k8oui showing the operators list and the workspace dock with operator, Claude and kubectl tabs (demo data)](docs/screenshot.png)
 
 ## What it does
 - **Operators list**: health, version, replicas, CRDs, custom-resource counts, restarts.
