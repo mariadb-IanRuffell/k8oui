@@ -22,7 +22,7 @@ Then open http://127.0.0.1:7788.
 
 ## How operators are found
 1. OLM `ClusterServiceVersion`s (if OLM is installed): owned CRDs and deployments come from the CSV.
-2. Otherwise Deployments that look like operators (`control-plane=controller-manager`, `*operator*`, `*controller-manager*`, …), with CRDs attributed by Helm release annotation, then by matching the CRD API group to the operator name. These are tagged **detected**, since attribution is a heuristic.
+2. Otherwise Deployments that look like operators (`control-plane=controller-manager`, `*operator*`, `*controller-manager*`, …), with CRDs attributed by Helm release annotation, then by matching the CRD API group to the operator name. Deployments from the same Helm release (an operator plus its webhook, cert-controller, …) are shown as one operator. These are tagged **detected**, since attribution is a heuristic.
 
 ## Security model
 Runs `kubectl` with your credentials, so treat it like your terminal. It binds to 127.0.0.1, rejects foreign `Host` headers (DNS rebinding), requires an `X-Requested-With` header on every API call (CSRF), passes arguments to kubectl as arrays (no shell), validates names, and only accepts manifests whose `kind`s belong to the selected operator's CRDs. Installing runs Helm/kubectl against code from the source you enter, so only add operators you trust; plans expire after 30 minutes and temp clones are deleted. Don't expose it with `--host 0.0.0.0` without an authenticating proxy.
