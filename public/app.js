@@ -86,7 +86,7 @@ function renderTop() {
   }
 }
 async function switchMode(mode) {
-  try { await api('/api/mode', { mode }); closeDrawer(); await load(); toast(mode === 'live' ? 'Connected' : 'Demo mode'); }
+  try { await api('/api/mode', { mode }); resetDock(); await load(); toast(mode === 'live' ? 'Connected' : 'Demo mode'); }
   catch (e) { toast(e.message, true); }
 }
 
@@ -174,13 +174,44 @@ const trunc = (t, n) => (t.length > n ? t.slice(0, n - 1) + '…' : t);
 // ---- drawer ----------------------------------------------------------------
 const TABS = [['overview', 'Overview'], ['resources', 'Resources'], ['pods', 'Pods'], ['logs', 'Logs'], ['events', 'Events'], ['manifest', 'Manifest']];
 
+// ---- dock: persistent tabs (operator, Claude sessions, kubectl) ------------
+// Panes stay in the DOM while hidden, so typed text, answers and output survive tab switches.
+const dock = { tabs: new Map(), active: null };
+function dockRender() {
+  const empty = dock.tabs.size === 0;
+  $('dock').hidden = empty; document.body.classList.toggle('dock-open', !empty);
+  $('dock-tabs').replaceChildren(...[...dock.tabs].map(([key, t]) => h('div', { class: 'dtab', role: 'tab', 'aria-selected': String(key === dock.active) },
+    h('button', { title: t.title, onclick: () => dockActivate(key) }, t.title),
+    h('button', { class: 'dtab-x', 'aria-label': `Close ${t.title}`, onclick: () => dockClose(key) }, '×'))));
+}
+function dockActivate(key) {
+  dock.active = key;
+  for (const [k, t] of dock.tabs) t.el.hidden = k !== key;
+  dockRender();
+}
+function dockOpen(key, title, build) {
+  let t = dock.tabs.get(key);
+  if (!t) { t = { el: build() }; t.el.classList.add('dock-pane'); $('dock-panes').append(t.el); dock.tabs.set(key, t); }
+  t.title = title; dockActivate(key);
+  return t.el;
+}
+function dockClose(key) {
+  const t = dock.tabs.get(key); if (!t) return;
+  t.el.remove(); dock.tabs.delete(key);
+  if (key === 'op') state.sel = null;
+  if (dock.active === key) dockActivate([...dock.tabs.keys()].pop() ?? null); else dockRender();
+}
+// Claude sessions describe one cluster; drop them (and the operator tab) when the context or mode changes.
+function resetDock() { closeDrawer(); for (const k of [...dock.tabs.keys()]) if (k.startsWith('claude:')) dockClose(k); }
+
 async function openDrawer(id, tab = 'overview') {
   state.sel = id; state.tab = tab; state.detail = null; state.logPod = null;
-  $('drawer').hidden = false; $('scrim').hidden = false;
+  const o = state.data.operators.find(x => x.id === id);
+  dockOpen('op', o ? o.name : id, () => h('div', { id: 'drawer-body' }));
   renderDrawer();
   await refreshDetail();
 }
-function closeDrawer() { state.sel = null; $('drawer').hidden = true; $('scrim').hidden = true; }
+function closeDrawer() { dockClose('op'); }
 async function refreshDetail() {
   const id = state.sel;
   try {
@@ -190,11 +221,11 @@ async function refreshDetail() {
   } catch (e) { if (state.sel === id) { state.detail = { error: e.message }; renderDrawer(); } }
 }
 function renderDrawer() {
+  if (!$('drawer-body')) return;
   const d = state.detail, summary = state.data.operators.find(o => o.id === state.sel);
   const o = d && !d.error ? d : summary;
   if (!o) { $('drawer-body').replaceChildren(h('div', { class: 'dbody' }, h('p', {}, 'This operator no longer exists.'), h('button', { class: 'btn', onclick: closeDrawer }, 'Close'))); return; }
   const head = h('div', { class: 'dh' },
-    h('button', { class: 'close', 'aria-label': 'Close', onclick: closeDrawer }, '×'),
     h('h2', {}, o.name, badge(o.status)),
     h('div', { class: 'sub' }, `${o.namespace}${o.version ? ' · v' + o.version.replace(/^v/, '') : ''} · ${o.source === 'olm' ? 'OLM-managed' : 'detected'}`),
     h('div', { class: 'actions' },
@@ -351,7 +382,7 @@ async function openCR(id, c, i) {
   const run = async dryRun => { try { show((await api('/api/apply', { id, yaml: ta.value, dryRun })).message); if (!dryRun) await load(); } catch (e) { show(e.message, true); } };
   const d = dialog([h('h2', {}, `${c.kind} / ${i.name}`), h('div', { class: 'muted' }, 'Edit and apply the manifest. Status and managed fields are ignored by the API server.'), ta, msg,
     h('div', { class: 'foot' }, h('button', { class: 'btn', onclick: () => d.close() }, 'Close'),
-      h('button', { class: 'btn claude', onclick: () => askClaude(state.data.operators.find(x => x.id === id) || { id, name: id }, { crd: c.name, name: i.name, ns: i.namespace }, `${c.kind}/${i.name}`) }, '✦ Ask Claude'),
+      h('button', { class: 'btn claude', onclick: () => { d.close(); askClaude(state.data.operators.find(x => x.id === id) || { id, name: id }, { crd: c.name, name: i.name, ns: i.namespace }, `${c.kind}/${i.name}`); } }, '✦ Ask Claude'),
       h('button', { class: 'btn', onclick: () => run(true) }, 'Validate (dry run)'),
       h('button', { class: 'btn primary', onclick: () => run(false) }, 'Apply'))]);
 }
@@ -378,26 +409,33 @@ function markdown(src) {
   }
   return out;
 }
-async function askClaude(o, target, label) {
-  const q = h('input', { type: 'text', placeholder: 'Optional: what are you seeing? (default: diagnose and suggest a fix)', 'aria-label': 'Question', style: 'width:100%;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 10px' });
-  const preview = h('pre', { class: 'log', style: 'max-height:30vh' }, 'Collecting diagnostics…');
-  const answer = h('div', { class: 'answer' });
-  const askBtn = h('button', { class: 'btn primary', disabled: true }, 'Ask Claude');
-  const d = dialog([h('h2', {}, `Ask Claude about ${label || o.name}`),
-    h('div', { class: 'muted' }, 'Read-only diagnostics (status, pods, events, recent logs' + (target ? ', this resource' : '') + ') are sent to Claude through your local claude CLI after you click Ask. Obvious credentials are redacted, but review it first. Claude cannot run anything; apply fixes yourself.'),
-    h('details', {}, h('summary', {}, 'What will be sent'), preview), q, answer,
-    h('div', { class: 'foot' }, h('button', { class: 'btn', onclick: () => d.close() }, 'Close'), askBtn)]);
-  try { preview.textContent = (await api('/api/assist/context', { id: o.id, target })).text; askBtn.disabled = false; }
-  catch (e) { preview.textContent = e.message; return; }
-  const go = async () => {
-    askBtn.disabled = true; q.disabled = true; askBtn.textContent = 'Thinking…';
-    answer.replaceChildren(h('p', { class: 'muted' }, 'Claude is analysing the diagnostics. This can take up to a minute.'));
-    try { answer.replaceChildren(...markdown((await api('/api/assist/ask', { id: o.id, target, question: q.value })).text)); }
-    catch (e) { answer.replaceChildren(h('div', { class: 'msg err' }, e.message)); }
-    askBtn.disabled = false; q.disabled = false; askBtn.textContent = 'Ask again';
-  };
-  askBtn.onclick = go;
-  q.onkeydown = e => { if (e.key === 'Enter' && !askBtn.disabled) go(); };
+function askClaude(o, target, label) {
+  const key = `claude:${o.id}|${target ? `${target.crd}/${target.ns || ''}/${target.name}` : ''}`;
+  dockOpen(key, `✦ ${label || o.name}`, () => {
+    const q = h('input', { type: 'text', placeholder: 'Optional: what are you seeing? (default: diagnose and suggest a fix)', 'aria-label': 'Question', style: 'flex:1;min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 10px;color:var(--text)' });
+    const preview = h('pre', { class: 'log', style: 'max-height:30vh' }, 'Collecting diagnostics…');
+    const answer = h('div', { class: 'answer' });
+    const askBtn = h('button', { class: 'btn primary', disabled: true }, 'Ask Claude');
+    const loadPreview = async () => {
+      try { preview.textContent = (await api('/api/assist/context', { id: o.id, target })).text; askBtn.disabled = false; }
+      catch (e) { preview.textContent = e.message; }
+    };
+    const go = async () => {
+      askBtn.disabled = true; q.disabled = true; askBtn.textContent = 'Thinking…';
+      answer.replaceChildren(h('p', { class: 'muted' }, 'Claude is analysing the diagnostics. This can take up to a minute; you can switch tabs meanwhile.'));
+      try { answer.replaceChildren(...markdown((await api('/api/assist/ask', { id: o.id, target, question: q.value })).text)); }
+      catch (e) { answer.replaceChildren(h('div', { class: 'msg err' }, e.message)); }
+      askBtn.disabled = false; q.disabled = false; askBtn.textContent = 'Ask again';
+      loadPreview();
+    };
+    askBtn.onclick = go;
+    q.onkeydown = e => { if (e.key === 'Enter' && !askBtn.disabled) go(); };
+    loadPreview();
+    return h('div', { class: 'dbody' }, h('h2', { style: 'margin:0 0 6px;font-size:18px' }, `Ask Claude about ${label || o.name}`),
+      h('div', { class: 'muted' }, 'Read-only diagnostics (status, pods, events, recent logs' + (target ? ', this resource' : '') + ') are sent to Claude through your local claude CLI after you click Ask. Obvious credentials are redacted, but review it first. Claude cannot run anything; apply fixes yourself.'),
+      h('details', { style: 'margin:10px 0' }, h('summary', {}, 'What will be sent'), preview),
+      h('div', { class: 'row' }, q, askBtn), answer);
+  });
 }
 
 // ---- add operator ----------------------------------------------------------
@@ -519,51 +557,51 @@ $('auto').checked = store.get('auto', true);
 $('auto').onchange = () => { store.set('auto', $('auto').checked); schedule(); };
 $('refresh').onclick = load;
 $('add').onclick = addOperator;
-$('ctx').onchange = async e => { try { await api('/api/context', { name: e.target.value }); closeDrawer(); await load(); } catch (err) { toast(err.message, true); } };
+$('ctx').onchange = async e => { try { await api('/api/context', { name: e.target.value }); resetDock(); await load(); } catch (err) { toast(err.message, true); } };
 $('search').oninput = e => { state.q = e.target.value; if (state.data) renderMain(); };
-$('scrim').onclick = closeDrawer;
 for (const b of $('views').children) b.onclick = () => { state.view = b.dataset.view; store.set('view', state.view); renderMain(); };
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && !$('dlg').open && state.sel) closeDrawer();
+  if (e.key === 'Escape' && !$('dlg').open && dock.active === 'op' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) closeDrawer();
   if (e.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) { e.preventDefault(); $('search').focus(); }
 });
 schedule();
 load();
 
-// ---- kubectl console -------------------------------------------------------
+// ---- kubectl console (a dock tab) -------------------------------------------
 const kHist = [];
-function kubectlConsole(prefill = '', confirmed = false) {
-  const input = h('input', { type: 'text', class: 'kinput', spellcheck: 'false', autocomplete: 'off', 'aria-label': 'kubectl command', placeholder: 'get pods -A    (no shell: one kubectl command, no pipes)', value: prefill.replace(/^kubectl\s+/, '') });
-  const out = h('pre', { class: 'log', style: 'min-height:120px;max-height:50vh;white-space:pre;word-break:normal' }, 'Runs against the selected context. Mutating commands ask for confirmation.');
-  const runBtn = h('button', { class: 'btn primary' }, 'Run');
-  let hi = kHist.length;
-  const run = async confirm => {
-    const command = input.value.trim(); if (!command) return;
-    if (kHist[kHist.length - 1] !== command) kHist.push(command); hi = kHist.length;
-    runBtn.disabled = true; out.textContent = 'Running…';
-    try {
-      const r = await api('/api/kubectl', { command, confirm });
-      if (r.needsConfirm) {
-        // The confirm dialog replaces this one, so reopen the console and run it confirmed.
-        const ok = await confirmDlg('Run a command that changes the cluster?', r.command, 'Run', true);
-        kubectlConsole(command, ok);
-        return;
-      }
-      out.textContent = `$ kubectl ${command.replace(/^kubectl\s+/, '')}\n${r.output || '(no output)'}${r.code ? `\n[exit ${r.code}]` : ''}`;
-      out.scrollTop = out.scrollHeight;
-      if (r.code === 0 && /^(kubectl\s+)?(apply|create|delete|patch|scale|label|annotate|set|replace|taint|cordon|uncordon|drain|expose|autoscale|rollout)\b/.test(command)) load();
-    } catch (e) { out.textContent = e.message; }
-    runBtn.disabled = false; input.focus();
-  };
-  runBtn.onclick = () => run(false);
-  input.onkeydown = e => {
-    if (e.key === 'Enter') run(false);
-    else if (e.key === 'ArrowUp' && kHist.length) { hi = Math.max(0, hi - 1); input.value = kHist[hi]; e.preventDefault(); }
-    else if (e.key === 'ArrowDown') { hi = Math.min(kHist.length, hi + 1); input.value = kHist[hi] || ''; e.preventDefault(); }
-  };
-  const d = dialog([h('h2', {}, 'kubectl'), h('div', { class: 'row' }, h('span', { class: 'muted' }, 'kubectl'), input, runBtn), out,
-    h('div', { class: 'foot' }, h('button', { class: 'btn', onclick: () => d.close() }, 'Close'))]);
+function kubectlConsole(prefill = '') {
+  dockOpen('kubectl', '>_ kubectl', () => {
+    const input = h('input', { type: 'text', class: 'kinput', spellcheck: 'false', autocomplete: 'off', 'aria-label': 'kubectl command', placeholder: 'get pods -A    (no shell: one kubectl command, no pipes)' });
+    const out = h('pre', { class: 'log', style: 'min-height:120px;max-height:none;white-space:pre;word-break:normal' }, 'Runs against the selected context. Mutating commands ask for confirmation.');
+    const runBtn = h('button', { class: 'btn primary' }, 'Run');
+    let hi = kHist.length;
+    const run = async () => {
+      const command = input.value.trim(); if (!command) return;
+      if (kHist[kHist.length - 1] !== command) kHist.push(command); hi = kHist.length;
+      runBtn.disabled = true; out.textContent = 'Running…';
+      try {
+        let r = await api('/api/kubectl', { command });
+        if (r.needsConfirm) {
+          if (!await confirmDlg('Run a command that changes the cluster?', r.command, 'Run', true)) { out.textContent = 'Cancelled.'; return; }
+          out.textContent = 'Running…';
+          r = await api('/api/kubectl', { command, confirm: true });
+        }
+        out.textContent = `$ kubectl ${command.replace(/^kubectl\s+/, '')}\n${r.output || '(no output)'}${r.code ? `\n[exit ${r.code}]` : ''}`;
+        out.scrollTop = out.scrollHeight;
+        if (r.code === 0 && /^(kubectl\s+)?(apply|create|delete|patch|scale|label|annotate|set|replace|taint|cordon|uncordon|drain|expose|autoscale|rollout)\b/.test(command)) load();
+      } catch (e) { out.textContent = e.message; }
+      finally { runBtn.disabled = false; input.focus(); }
+    };
+    runBtn.onclick = run;
+    input.onkeydown = e => {
+      if (e.key === 'Enter') run();
+      else if (e.key === 'ArrowUp' && kHist.length) { hi = Math.max(0, hi - 1); input.value = kHist[hi]; e.preventDefault(); }
+      else if (e.key === 'ArrowDown') { hi = Math.min(kHist.length, hi + 1); input.value = kHist[hi] || ''; e.preventDefault(); }
+    };
+    return h('div', { class: 'dbody' }, h('h2', { style: 'margin:0 0 10px;font-size:18px' }, 'kubectl'), h('div', { class: 'row' }, h('span', { class: 'muted' }, 'kubectl'), input, runBtn), out);
+  });
+  const input = document.querySelector('.kinput');
+  if (prefill) input.value = prefill.replace(/^kubectl\s+/, '');
   input.focus();
-  if (confirmed) run(true);
 }
 $('kubectl').onclick = () => kubectlConsole();

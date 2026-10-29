@@ -92,9 +92,17 @@ td .name { font-weight: 600; }
 .topo circle { stroke: var(--panel); stroke-width: 1.5; cursor: pointer; }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; color: var(--muted); font-size: 12.5px; }
 
-.scrim { position: fixed; inset: 0; background: rgba(10,15,25,.35); z-index: 9; }
-.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(640px, 100vw); background: var(--panel); border-left: 1px solid var(--line); box-shadow: var(--shadow); z-index: 10; overflow-y: auto; }
-.drawer[hidden], .scrim[hidden] { display: none; }
+.dock { position: fixed; top: 0; right: 0; bottom: 0; width: min(640px, 100vw); background: var(--panel); border-left: 1px solid var(--line); box-shadow: var(--shadow); z-index: 10; display: flex; flex-direction: column; }
+.dock[hidden] { display: none; }
+.dock-tabs { display: flex; gap: 2px; padding: 6px 8px 0; background: var(--bg); border-bottom: 1px solid var(--line); overflow-x: auto; flex: none; }
+.dtab { display: flex; align-items: center; max-width: 200px; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; color: var(--muted); }
+.dtab[aria-selected=true] { background: var(--panel); border-color: var(--line); color: var(--text); margin-bottom: -1px; font-weight: 600; }
+.dtab button { border: 0; background: none; color: inherit; font: inherit; cursor: pointer; padding: 7px 4px 7px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dtab .dtab-x { padding: 7px 8px 7px 4px; font-size: 16px; line-height: 1; }
+.dock-panes { flex: 1; min-height: 0; position: relative; }
+.dock-pane { position: absolute; inset: 0; overflow-y: auto; }
+.dock-pane[hidden] { display: none; }
+@media (min-width: 1100px) { body.dock-open { padding-right: 640px; } }
 .dh { padding: 16px 20px 0; position: sticky; top: 0; background: var(--panel); z-index: 2; border-bottom: 1px solid var(--line); }
 .dh h2 { margin: 0; font-size: 20px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .dh .sub { color: var(--muted); margin: 2px 0 10px; }
@@ -103,7 +111,6 @@ td .name { font-weight: 600; }
 .dtabs button { border: 0; background: none; padding: 8px 12px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; white-space: nowrap; }
 .dtabs button[aria-selected=true] { color: var(--text); border-color: var(--accent); font-weight: 600; }
 .dbody { padding: 16px 20px 40px; }
-.close { position: absolute; top: 12px; right: 14px; border: 0; background: none; font-size: 22px; cursor: pointer; color: var(--muted); }
 .kv { display: grid; grid-template-columns: 130px 1fr; gap: 8px 14px; margin: 0 0 16px; }
 .kv dt { color: var(--muted); } .kv dd { margin: 0; word-break: break-word; }
 h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 18px 0 8px; }
