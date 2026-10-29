@@ -8,6 +8,7 @@ const demo = require('./lib/demo');
 const source = require('./lib/source');
 const catalog = require('./lib/catalog');
 const assist = require('./lib/assist');
+const konsole = require('./lib/console');
 
 const argv = process.argv.slice(2);
 const flag = n => argv.includes(`--${n}`);
@@ -65,6 +66,12 @@ const routes = {
   'POST /api/catalog/install': async ({ b }) => ({ message: await backend.installPreset(b, !!b.dryRun) }),
   'POST /api/assist/context': async ({ b }) => ({ text: await assist.context(backend, mode, b) }),
   'POST /api/assist/ask': async ({ b }) => assist.ask(backend, mode, b),
+  'POST /api/kubectl': async ({ b }) => {
+    const { args, write } = konsole.parse(b.command);
+    if (write && !b.confirm) return { needsConfirm: true, command: 'kubectl ' + args.join(' ') };
+    const r = await backend.kubectl(args);
+    return { ...r, output: r.output.length > 200000 ? r.output.slice(0, 200000) + '\n…(output truncated)' : r.output };
+  },
   'POST /api/uninstall': async ({ b }) => ({ message: await backend.uninstall(b.id) }),
   'POST /api/context': async ({ b }) => { await backend.setContext(b.name); return { ok: true }; },
   'POST /api/mode': async ({ b }) => {

@@ -136,3 +136,7 @@ textarea.code { width: 100%; min-height: 340px; background: var(--code); resize:
 .answer code { background: var(--code); padding: 1px 5px; border-radius: 4px; }
 .codeblock { position: relative; }
 .codeblock .btn { position: absolute; top: 16px; right: 8px; }
+
+.kinput { flex: 1; min-width: 0; font-family: ui-monospace, Menlo, monospace; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; color: var(--text); }
+.cbtns { position: absolute; top: 16px; right: 8px; display: flex; gap: 6px; }
+.codeblock .cbtns .btn { position: static; }

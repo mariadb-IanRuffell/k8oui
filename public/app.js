@@ -362,7 +362,8 @@ function markdown(src) {
     if (i % 2) {
       const code = chunk.replace(/\n$/, '');
       const copy = h('button', { class: 'btn small', onclick: async () => { try { await navigator.clipboard.writeText(code); copy.textContent = 'Copied'; } catch { copy.textContent = 'Copy failed'; } } }, 'Copy');
-      out.push(h('div', { class: 'codeblock' }, copy, h('pre', { class: 'log' }, code)));
+      const runnable = /^kubectl\s/.test(code) && !code.includes('\n') && !/[|><;&]/.test(code);
+      out.push(h('div', { class: 'codeblock' }, h('span', { class: 'cbtns' }, runnable && h('button', { class: 'btn small', onclick: () => kubectlConsole(code) }, 'Run in console'), copy), h('pre', { class: 'log' }, code)));
     } else for (const para of chunk.split(/\n{2,}/).filter(x => x.trim())) {
       const lines = para.split('\n');
       if (/^\s*(\d+\.|[-*])\s/.test(lines[0])) out.push(h('ul', {}, lines.map(l => h('li', {}, inline(l.replace(/^\s*(\d+\.|[-*])\s/, ''))))));
@@ -522,3 +523,41 @@ document.addEventListener('keydown', e => {
 });
 schedule();
 load();
+
+// ---- kubectl console -------------------------------------------------------
+const kHist = [];
+function kubectlConsole(prefill = '', confirmed = false) {
+  const input = h('input', { type: 'text', class: 'kinput', spellcheck: 'false', autocomplete: 'off', 'aria-label': 'kubectl command', placeholder: 'get pods -A    (no shell: one kubectl command, no pipes)', value: prefill.replace(/^kubectl\s+/, '') });
+  const out = h('pre', { class: 'log', style: 'min-height:120px;max-height:50vh;white-space:pre;word-break:normal' }, 'Runs against the selected context. Mutating commands ask for confirmation.');
+  const runBtn = h('button', { class: 'btn primary' }, 'Run');
+  let hi = kHist.length;
+  const run = async confirm => {
+    const command = input.value.trim(); if (!command) return;
+    if (kHist[kHist.length - 1] !== command) kHist.push(command); hi = kHist.length;
+    runBtn.disabled = true; out.textContent = 'Running…';
+    try {
+      const r = await api('/api/kubectl', { command, confirm });
+      if (r.needsConfirm) {
+        // The confirm dialog replaces this one, so reopen the console and run it confirmed.
+        const ok = await confirmDlg('Run a command that changes the cluster?', r.command, 'Run', true);
+        kubectlConsole(command, ok);
+        return;
+      }
+      out.textContent = `$ kubectl ${command.replace(/^kubectl\s+/, '')}\n${r.output || '(no output)'}${r.code ? `\n[exit ${r.code}]` : ''}`;
+      out.scrollTop = out.scrollHeight;
+      if (r.code === 0 && /^(kubectl\s+)?(apply|create|delete|patch|scale|label|annotate|set|replace|taint|cordon|uncordon|drain|expose|autoscale|rollout)\b/.test(command)) load();
+    } catch (e) { out.textContent = e.message; }
+    runBtn.disabled = false; input.focus();
+  };
+  runBtn.onclick = () => run(false);
+  input.onkeydown = e => {
+    if (e.key === 'Enter') run(false);
+    else if (e.key === 'ArrowUp' && kHist.length) { hi = Math.max(0, hi - 1); input.value = kHist[hi]; e.preventDefault(); }
+    else if (e.key === 'ArrowDown') { hi = Math.min(kHist.length, hi + 1); input.value = kHist[hi] || ''; e.preventDefault(); }
+  };
+  const d = dialog([h('h2', {}, 'kubectl'), h('div', { class: 'row' }, h('span', { class: 'muted' }, 'kubectl'), input, runBtn), out,
+    h('div', { class: 'foot' }, h('button', { class: 'btn', onclick: () => d.close() }, 'Close'))]);
+  input.focus();
+  if (confirmed) run(true);
+}
+$('kubectl').onclick = () => kubectlConsole();
